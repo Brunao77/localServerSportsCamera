@@ -76,11 +76,11 @@ const requestHandler = async (request, response) => {
           "30",
           "-an",
           "-force_key_frames",
-          "expr:gte(t,n_forced*20)",
+          "expr:gte(t,n_forced*40)",
           "-f",
           "hls",
           "-hls_time",
-          "20",
+          "40",
           "-hls_list_size",
           "0",
           "-y",
@@ -96,7 +96,7 @@ const requestHandler = async (request, response) => {
           console.log(`stdout: ${data}`);
         });
   
-        response.writeHead(200, { "Content-Type": "application/json" });
+        response.writeHead(200, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ message: "Transmisión HLS iniciada" }));
       });
     }
@@ -115,65 +115,73 @@ const requestHandler = async (request, response) => {
       const endTime = new Date();
       ffmpegProcesses[rtsp].process.kill("SIGKILL");
 
-      ffmpegProcesses[rtsp].process.on("exit", async () => {
-        const { folderName } = ffmpegProcesses[rtsp];
-        const folderPath = path.join(__dirname, folderName);
+      const res = await new Promise((resolve, reject) => {
+        ffmpegProcesses[rtsp].process.on("exit", async () => {
+          const { folderName } = ffmpegProcesses[rtsp];
+          const folderPath = path.join(__dirname, folderName);
 
-        fs.appendFileSync(
-          `${path.join(folderPath, folderName)}a.m3u8`,
-          "#EXT-X-ENDLIST\n"
-        );
+          fs.appendFileSync(
+            `${path.join(folderPath, folderName)}a.m3u8`,
+            "#EXT-X-ENDLIST\n"
+          );
 
-        const files = fs.readdirSync(folderPath);
+          const files = fs.readdirSync(folderPath);
 
-        const promises = files.map(async (file) => {
-          const filePath = path.join(folderPath, file);
-          const s3Key = path.basename(filePath);
-          await uploadFile(filePath, s3Key);
-        })
+          const promises = files.map(async (file) => {
+            const filePath = path.join(folderPath, file);
+            const s3Key = path.basename(filePath);
+            await uploadFile(filePath, s3Key);
+          })
 
-        await Promise.all(promises);
+          await Promise.all(promises);
 
-        fs.rmSync(folderPath, { recursive: true, force: true });
+          fs.rmSync(folderPath, { recursive: true, force: true });
 
-        const data = folderName.split("a");
-        const camera_id = data[0];
-        const date = data[1];
-        const start_time = data[2].replace(/-/g, ":");
-        const end_time = endTime.toTimeString().slice(0, 5);
-        const video_url = `${folderName}a.m3u8`;
+          const data = folderName.split("a");
+          const camera_id = data[0];
+          const date = data[1];
+          const start_time = data[2].replace(/-/g, ":");
+          const end_time = endTime.toTimeString().slice(0, 5);
+          const video_url = `${folderName}a.m3u8`;
 
-        delete ffmpegProcesses[rtsp];
+          delete ffmpegProcesses[rtsp];
 
-        try {
-          const res = await fetch("https://sportscamera.vercel.app/api/videos/uploadToDb", {
-            method: "POST",
-            headers:{
-              "Origin": "http://localhost:3000",
-            },
-            body: JSON.stringify({
-              date,
-              start_time,
-              end_time,
-              video_url,
-              camera_id,
-            }),
-          });
+          try {
+            const res = await fetch("https://sportscamera.vercel.app/api/videos/uploadToDb", {
+              method: "POST",
+              headers:{
+                "Origin": "http://localhost:3000",
+              },
+              body: JSON.stringify({
+                date,
+                start_time,
+                end_time,
+                video_url,
+                camera_id,
+              }),
+            });
 
-          if(res.ok){
-            response.writeHead(200, { "Content-Type": "application/json" });
-            response.end(JSON.stringify({ start_time, end_time }));
-          }else{
-            response.writeHead(404, { "Content-Type": "application/json" });
-            response.end(JSON.stringify({ error: 'No se pudo subir el video a la db'}));
+            if(res.ok){
+              resolve({status:200, start_time, end_time})
+              
+            }else{
+              resolve({status:404})
+            }
+          
+          } catch (error) {
+            reject(error)
           }
-        
-        } catch (error) {
-          response.writeHead(404, { 'Content-Type': 'application/json' });
-          response.end(JSON.stringify({ error }));
-          console.log(error);
-        }
-      });
+        });
+      })
+
+      if(res.status === 200){
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ start_time: res.start_time, end_time: res.end_time }));
+      }
+      if(res.status === 404){
+        response.writeHead(404, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'No se pudo subir el video a la db'}));
+      }
     }
   }
 
