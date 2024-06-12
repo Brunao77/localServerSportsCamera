@@ -3,113 +3,288 @@ const url = require("url");
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-require("dotenv").config();
-const pg = require("pg");
-
-const pool = new pg.Pool({
-  connectionString: process.env.PGCONNECTIONSTRING,
-});
+const { uploadFile } = require("./controller");
 
 let ffmpegProcesses = {};
 let ffmpegProcessesStream = {};
 
-const S3 = new S3Client({
-  region: "auto",
-  endpoint: `https://${process.env.ACCOUNTID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.ACCESSKEYID,
-    secretAccessKey: process.env.SECRETACCESSKEY,
-  },
-});
-
-async function uploadToS3(filename) {
-  try {
-    const params = {
-      Bucket: "sportscamera040621",
-      Key: filename,
-      Body: fs.createReadStream(filename),
-    };
-    const uploadResult = await S3.send(new PutObjectCommand(params));
-    // Elimina el archivo local después de subirlo a S3
-    fs.unlinkSync(filename);
-
-    return uploadResult;
-  } catch (error) {
-    console.error("Error al subir el archivo a S3:", error);
-  }
-}
-
 const requestHandler = async (request, response) => {
   const parsedUrl = url.parse(request.url, true);
   const { pathname, query } = parsedUrl;
-  response.setHeader("Access-Control-Allow-Origin", "http://localhost:4321");
+  response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (pathname === "/start-record") {
+    console.log('START RECORD EXECUTE')
+    const { camera_id, rtsp } = query;
+    const now = new Date();
+    const options = {
+      timeZone: "America/Argentina/Buenos_Aires",
+      hour12: false,
+    };
+    const formattedDate = new Intl.DateTimeFormat("es-AR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      ...options,
+    })
+      .format(now)
+      .split("/")
+      .reverse()
+      .join("-");
+
+    const formattedTime = new Intl.DateTimeFormat("es-AR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      ...options,
+    })
+      .format(now)
+      .replace(/:/g, "-")
+      .slice(0, -3);
+    const folderName = `${camera_id}a${formattedDate}a${formattedTime}`;
+    const folderPath = path.join(__dirname, folderName);
+
+    if (
+      rtsp in ffmpegProcesses &&
+      ffmpegProcesses[rtsp] &&
+      ffmpegProcesses[rtsp].exitCode === null
+    ) {
+      await fetch(`http://localhost:3000/stop-record?rtsp=${rtsp}`)
+    }
+    
+    if(!fs.existsSync(folderPath)){
+      fs.mkdir(folderPath, (error) => {
+        if (error) {
+          console.error("Error al crear la carpeta:", error);
+          response.writeHead(500, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ error: "Error al crear la carpeta" }));
+          return;
+        }
+        const filename = path.join(folderPath, `${folderName}a.m3u8`);
+        const ffmpeg = spawn("ffmpeg", [
+          "-i",
+          rtsp,
+          "-r",
+          "25",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "fast",
+          "-crf",
+          "30",
+          "-an",
+          "-force_key_frames",
+          "expr:gte(t,n_forced*20)",
+          "-f",
+          "hls",
+          "-hls_time",
+          "20",
+          "-hls_list_size",
+          "0",
+          "-y",
+          filename,
+        ], { windowsHide: true });
+  
+        ffmpegProcesses[rtsp] = { process: ffmpeg, folderName, start_time: Date.now()};
+  
+        ffmpeg.stdout.on("data", (data) => {
+          console.log(`stdout:\n${data}`);
+        });
+        ffmpeg.stderr.on("data", (data) => {
+          console.log(`stdout: ${data}`);
+        });
+  
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ message: "Transmisión HLS iniciada" }));
+      });
+    }
+    
+  }
+
+  if (pathname === "/stop-record") {
+    console.log('STOP RECORD EXECUTE')
+    const { rtsp } = query;
+
+    if (
+      rtsp in ffmpegProcesses &&
+      ffmpegProcesses[rtsp].process &&
+      ffmpegProcesses[rtsp].process.exitCode === null
+    ) {
+      const endTime = new Date();
+      ffmpegProcesses[rtsp].process.kill("SIGKILL");
+
+      ffmpegProcesses[rtsp].process.on("exit", async () => {
+        const { folderName } = ffmpegProcesses[rtsp];
+        const folderPath = path.join(__dirname, folderName);
+
+        fs.appendFileSync(
+          `${path.join(folderPath, folderName)}a.m3u8`,
+          "#EXT-X-ENDLIST\n"
+        );
+
+        const files = fs.readdirSync(folderPath);
+
+        const promises = files.map(async (file) => {
+          const filePath = path.join(folderPath, file);
+          const s3Key = path.basename(filePath);
+          await uploadFile(filePath, s3Key);
+        })
+
+        await Promise.all(promises);
+
+        fs.rmSync(folderPath, { recursive: true, force: true });
+
+        const data = folderName.split("a");
+        const camera_id = data[0];
+        const date = data[1];
+        const start_time = data[2].replace(/-/g, ":");
+        const end_time = endTime.toTimeString().slice(0, 5);
+        const video_url = `${folderName}a.m3u8`;
+
+        delete ffmpegProcesses[rtsp];
+
+        try {
+          const res = await fetch("https://sportscamera.vercel.app/api/videos/uploadToDb", {
+            method: "POST",
+            headers:{
+              "Origin": "http://localhost:3000",
+            },
+            body: JSON.stringify({
+              date,
+              start_time,
+              end_time,
+              video_url,
+              camera_id,
+            }),
+          });
+
+          if(res.ok){
+            response.writeHead(200, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ start_time, end_time }));
+          }else{
+            response.writeHead(404, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ error: 'No se pudo subir el video a la db'}));
+          }
+        
+        } catch (error) {
+          response.writeHead(404, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ error }));
+          console.log(error);
+        }
+      });
+    }
+  }
 
   if (pathname === "/exist-record") {
     const { rtsp } = query;
     if (rtsp in ffmpegProcesses) {
-      response.writeHead(200);
-      response.end("true");
+      const responseBody = {
+        exists: true,
+        start_time: ffmpegProcesses[rtsp].start_time
+      };
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(responseBody));
       return;
     } else {
-      response.writeHead(200);
-      response.end("false");
+      const responseBody = {
+          exists: false
+      };
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(responseBody));
     }
+  }
+
+  if (pathname === "/get-thumbnail") {
+    const { rtsp } = query;
+
+    const ip = rtsp.match(/rtsp:\/\/admin:password123@([\d.]+):/)[1];
+    const folderPath = path.join(__dirname, ip);
+    
+
+    fs.mkdir(folderPath, (error) => {
+      const filePath = path.join(folderPath, 'thumbnail.jpg');
+
+      const ffmpeg = spawn("ffmpeg", [
+        "-y",
+        "-i",
+        rtsp,
+        "-vframes",
+        "1",
+        filePath,
+      ], { windowsHide: true });
+
+      ffmpeg.stdout.on("data", (data) => {
+        console.log(`stdout:\n${data}`);
+      });
+      ffmpeg.stderr.on("data", (data) => {
+        console.log(`stdout: ${data}`);
+      });
+
+      ffmpeg.on('close', ()=>{
+        ffmpeg.kill("SIGKILL");
+        response.writeHead(200, { "Content-Type": 'image/jpg' })
+        fs.createReadStream(filePath).pipe(response)
+      })
+    })
   }
 
   if (pathname === "/run-stream") {
     const { rtsp } = query;
-    const ip = rtsp.match(/rtsp:\/\/admin:password123@([\d.]+):/)[1];
-    const folderPath = path.join(__dirname, ip);
 
-    if (
-      rtsp in ffmpegProcessesStream &&
-      ffmpegProcessesStream[rtsp] &&
-      ffmpegProcessesStream[rtsp].exitCode === null
-    ) {
-      ffmpegProcessesStream[rtsp].kill();
-      delete ffmpegProcessesStream[rtsp];
-    }
+    if (!rtsp) {
+      response.writeHead(404);
+      response.end("no parameter");
+    } else {
+      const ip = rtsp.match(/rtsp:\/\/admin:password123@([\d.]+):/)[1];
+      const folderPath = path.join(__dirname, ip);
 
-    if (fs.existsSync(folderPath)) {
-      fs.rmSync(folderPath, { recursive: true });
-    }
-
-    fs.mkdir(folderPath, (error) => {
-      if (error) {
-        console.error("Error al crear la carpeta:", error);
-        response.writeHead(500);
-        response.end("Error al crear la carpeta");
-        return;
+      if (
+        rtsp in ffmpegProcessesStream &&
+        ffmpegProcessesStream[rtsp] &&
+        ffmpegProcessesStream[rtsp].exitCode === null
+      ) {
+        ffmpegProcessesStream[rtsp].kill();
+        delete ffmpegProcessesStream[rtsp];
       }
-      const filename = path.join(folderPath, "index.m3u8");
 
-      const ffmpeg = spawn("ffmpeg", [
-        "-i",
-        rtsp,
-        "-c:v",
-        "copy",
-        "-f",
-        "hls",
-        "-hls_time",
-        "2",
-        "-hls_list_size",
-        "2",
-        "-start_number",
-        "1",
-        "-hls_flags",
-        "delete_segments",
-        "-y",
-        filename,
-      ]);
+      if (fs.existsSync(folderPath)) {
+        fs.rmSync(folderPath, { recursive: true });
+      }
 
-      ffmpegProcessesStream[rtsp] = ffmpeg;
+      fs.mkdir(folderPath, (error) => {
+        const filename = path.join(folderPath, "index.m3u8");
 
-      response.writeHead(200);
-      response.end("Transmisión HLS iniciada");
-    });
+        const ffmpeg = spawn("ffmpeg", [
+          "-i",
+          rtsp,
+          "-c:v",
+          "copy",
+          "-preset",
+          "ultrafast",
+          "-tune",
+          "zerolatency",
+          "-f",
+          "hls",
+          "-hls_time",
+          "2",
+          "-hls_list_size",
+          "2",
+          "-start_number",
+          "1",
+          "-hls_flags",
+          "delete_segments",
+          "-y",
+          filename,
+        ]);
+
+        ffmpegProcessesStream[rtsp] = ffmpeg;
+
+        response.writeHead(200);
+        response.end("Transmisión HLS iniciada");
+      });
+    }
   }
 
   const pathParts = pathname.split("/").slice(1);
@@ -117,7 +292,7 @@ const requestHandler = async (request, response) => {
     const ip = pathParts[1];
     const file = pathParts[2];
     const folderPath = path.join(__dirname, ip, "/", file);
-    var filePath = "./" + ip + "/" + file;
+    const filePath = "./" + ip + "/" + file;
 
     fs.readFile(filePath, function (error, content) {
       if (error) {
@@ -131,137 +306,6 @@ const requestHandler = async (request, response) => {
         response.end(content, "utf-8");
       }
     });
-  }
-
-  if (pathname === "/start-record") {
-    const { camera_id, rtsp } = query;
-
-    if (
-      !(rtsp in ffmpegProcesses) ||
-      (ffmpegProcesses[rtsp].process &&
-        ffmpegProcesses[rtsp].process.exitCode !== null)
-    ) {
-      const now = new Date();
-      const formattedDate = now.toISOString().split("T")[0];
-      const formattedTime = now
-        .toLocaleTimeString("en-US", { hour12: false })
-        .replace(/:/g, "-")
-        .slice(0, -3);
-      const filename = `${camera_id}a${formattedDate}a${formattedTime}`;
-
-      const ffmpeg = spawn("ffmpeg", [
-        "-i",
-        rtsp,
-        "-c:v",
-        "copy",
-        "-an",
-        "-f",
-        "flv",
-        `${filename}.flv`,
-      ]);
-
-      ffmpegProcesses[rtsp] = {
-        process: ffmpeg,
-        filename,
-      };
-
-      ffmpeg.stdout.on("data", (data) => {
-        console.log(`stdout:\n${data}`);
-      });
-      ffmpeg.stderr.on("data", (data) => {
-        console.log(`stdout: ${data}`);
-      });
-
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ message: "Recording started", filename }));
-    } else {
-      response.statusCode = 400;
-      response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({
-          error: "Recording already in progress or RTSP stream not found",
-        })
-      );
-    }
-  }
-
-  if (pathname === "/stop-record") {
-    const { rtsp } = query;
-    if (
-      rtsp in ffmpegProcesses &&
-      ffmpegProcesses[rtsp].process &&
-      ffmpegProcesses[rtsp].process.exitCode === null
-    ) {
-      ffmpegProcesses[rtsp].process.kill("SIGKILL");
-
-      ffmpegProcesses[rtsp].process.on("exit", async () => {
-        const filename = ffmpegProcesses[rtsp].filename;
-        const endTime = new Date();
-        delete ffmpegProcesses[rtsp];
-
-        const ffmpeg = spawn("ffmpeg", [
-          "-i",
-          `${filename}.flv`,
-          "-c:v",
-          "libx264",
-          "-preset",
-          "fast",
-          "-crf",
-          "30",
-          "-an",
-          `${filename}.mp4`,
-        ]);
-
-        ffmpeg.stdout.on("data", (data) => {
-          console.log(`stdout:\n${data}`);
-        });
-        ffmpeg.stderr.on("data", (data) => {
-          console.log(`stdout: ${data}`);
-        });
-
-        ffmpeg.on("exit", async () => {
-          setTimeout(async () => {
-            await uploadToS3(`${filename}.mp4`);
-            fs.unlinkSync(`${filename}.flv`);
-
-            const data = filename.split("a");
-
-            const camera_id = data[0];
-            const date = data[1];
-            const start_time = data[2].replace(/-/g, ":");
-            const end_time = endTime
-              .toLocaleTimeString("en-US", { hour12: false })
-              .slice(0, -3);
-            const video_url = `https://pub-68389555a737432790f03f489addece1.r2.dev/${filename}.mp4`;
-
-            try {
-              await pool.query(
-                "INSERT INTO videos(date, start_time, end_time, video_url, camera_id) VALUES ($1, $2, $3, $4, $5);",
-                [date, start_time, end_time, video_url, camera_id]
-              );
-            } catch (error) {
-              console.log(error);
-            }
-
-            response.statusCode = 200;
-            response.setHeader("Content-Type", "application/json");
-            response.end(JSON.stringify({ message: "Recording stopped" }));
-          }, 5000);
-        });
-      });
-      ffmpegProcesses[rtsp].process.on("error", (error) => {
-        console.error(error);
-      });
-    } else {
-      response.statusCode = 400;
-      response.setHeader("Content-Type", "application/json");
-      response.end(
-        JSON.stringify({
-          error: "No active recording found for the specified RTSP stream",
-        })
-      );
-    }
   }
 
   if (pathname === "/") {
