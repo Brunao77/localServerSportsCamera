@@ -1,20 +1,26 @@
+
+
+
 RECORD VIDEO
-ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -c:v libx264 -preset medium -crf 28 -an output.mp4
-
-
-ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -c:v copy -an -f flv output.flv
-
-
-HLS
-ffmpeg -i rtsp:admin:password123@192.168.0.64:554/Streaming/Channels/102 -c:v libx264 -preset ultrafast -tune zerolatency -b:v 800k -bufsize 800k -f hls -hls_time 5 -hls_list_size 10 -start_number 1 -hls_flags delete_segments -y ./index.m3u8
-
-
-RECORD HLS
-ffmpeg -i rtsp:admin:password123@192.168.0.64:554/Streaming/Channels/101 -c:v libx264 -preset fast -crf 30 -an -f hls -hls_time 2 -hls_playlist_type event -y index.m3u8
-
 ffmpeg -i rtsp:admin:password123@192.168.0.64:554/Streaming/Channels/101 -r 25 -c:v libx264 -preset fast -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8
 
-ffmpeg -i rtsp:admin:password123@192.168.0.64:554/Streaming/Channels/101 -r 25 -c:v libx264 -preset fast -crf 30 -an -force_key_frames expr:gte(t,n_forced*20) -f hls -hls_time 20 -hls_list_size 0 -y index.m3u8
+MAKE CLIP
 
 ffmpeg -i input.m3u8 -ss 8 -t 16 -c copy output.mp4
 ffmpeg -i https://pub-68389555a737432790f03f489addece1.r2.dev/11a2024-06-07a00-45a.m3u8 -ss 8 -t 16 -c copy -movflags frag_keyframe+empty_moov output.mp4
+
+
+1280 x 720
+
+ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset fast -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    196MB
+ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset slow -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    196MB
+ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset fast -crf 25 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    688MB
+
+1920 x 1280
+
+ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset fast -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    256MB
+ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset slow -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    325MB
+ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset fast -crf 25 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    852MB   X
+
+ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[0:v]scale=1920:1080[scaled_video];[1:v]scale=iw/4:ih/4[watermark];[scaled_video][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset fast -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8
+PROBAR PRIMERO CON 1920 X 1080 -PRESET FAST CRF 30
