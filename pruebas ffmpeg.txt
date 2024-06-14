@@ -22,5 +22,4 @@ ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i wa
 ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset slow -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    325MB
 ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[1:v]scale=iw/4:ih/4[watermark];[0:v][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset fast -crf 25 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8    852MB   X
 
-ffmpeg -i rtsp://admin:password123@192.168.0.64:554/Streaming/Channels/101 -i watermark.png -filter_complex "[0:v]scale=1920:1080[scaled_video];[1:v]scale=iw/4:ih/4[watermark];[scaled_video][watermark]overlay=W-w-10:H-h-10" -r 25 -c:v libx264 -preset fast -crf 30 -an -force_key_frames expr:gte(t,n_forced*40) -f hls -hls_time 40 -hls_list_size 0 -y index.m3u8
 PROBAR PRIMERO CON 1920 X 1080 -PRESET FAST CRF 30
