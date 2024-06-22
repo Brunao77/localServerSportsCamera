@@ -12,8 +12,14 @@ const requestHandler = async (request, response) => {
   const parsedUrl = url.parse(request.url, true);
   const { pathname, query } = parsedUrl;
   response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (request.method === "OPTIONS") {
+    response.writeHead(204);
+    response.end();
+    return;
+  }
 
   if (pathname === "/start-record") {
     console.log('START RECORD EXECUTE')
@@ -211,8 +217,10 @@ const requestHandler = async (request, response) => {
 
   if (pathname === "/get-thumbnail") {
     const { rtsp } = query;
-
-    const ip = rtsp.match(/rtsp:\/\/admin:password123@([\d.]+):/)[1];
+    const ip = rtsp.match(/(\d{1,3}\.){3}\d{1,3}/)[0];
+    console.log(ip)
+    console.log(rtsp)
+    //const ip = rtsp.match(/rtsp:\/\/admin:password123@([\d.]+):/)[1];
     const folderPath = path.join(__dirname, ip);
     
 
