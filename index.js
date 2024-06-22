@@ -9,17 +9,23 @@ let ffmpegProcesses = {};
 let ffmpegProcessesStream = {};
 
 const requestHandler = async (request, response) => {
-  const parsedUrl = url.parse(request.url, true);
-  const { pathname, query } = parsedUrl;
-  response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  const headers = {
+    'Access-Control-Allow-Origin': '*', /* @dev First, read about security */
+    'Access-Control-Allow-Methods': 'OPTIONS, POST, GET',
+    'Access-Control-Max-Age': 2592000, // 30 days
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    /** add other headers as per requirement */
+  };
 
-  if (request.method === "OPTIONS") {
-    response.writeHead(204);
+  if (request.method === 'OPTIONS') {
+    response.writeHead(204, headers);
     response.end();
     return;
   }
+
+
+  const parsedUrl = url.parse(request.url, true);
+  const { pathname, query } = parsedUrl;
 
   if (pathname === "/start-record") {
     console.log('START RECORD EXECUTE')
@@ -111,7 +117,6 @@ const requestHandler = async (request, response) => {
         response.end(JSON.stringify({ message: "Transmisión HLS iniciada" }));
       });
     }
-    
   }
 
   if (pathname === "/stop-record") {
@@ -197,6 +202,7 @@ const requestHandler = async (request, response) => {
   }
 
   if (pathname === "/exist-record") {
+	  console.log("exist record")
     const { rtsp } = query;
     if (rtsp in ffmpegProcesses) {
       const responseBody = {
@@ -217,6 +223,7 @@ const requestHandler = async (request, response) => {
 
   if (pathname === "/get-thumbnail") {
     const { rtsp } = query;
+	
     const ip = rtsp.match(/(\d{1,3}\.){3}\d{1,3}/)[0];
     console.log(ip)
     console.log(rtsp)
